@@ -6,7 +6,7 @@ const PROVIDERS = {
     baseURL: 'https://openrouter.ai/api/v1',
     model: 'google/gemma-4-26b-a4b-it:free',
     apiKey:
-      import.meta.env.VITE_OPENROUTER_API_KEY || import.meta.env.VITE_GOOGLE_API_KEY,
+      import.meta.env.VITE_API_KEY || import.meta.env.VITE_API_KEY,
   },
 } as const
 
