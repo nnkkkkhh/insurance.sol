@@ -1,12 +1,21 @@
 import axios from 'axios'
 import type { AiChatMessage, Scenario, ScenarioPrompt } from '../types'
 
+const openRouterModels = (
+  import.meta.env.VITE_OPENROUTER_MODELS || 'google/gemma-4-26b-a4b-it:free'
+)
+  .split(',')
+  .map((model: string) => model.trim())
+  .filter(Boolean)
+
 const PROVIDERS = {
   openrouter: {
     baseURL: 'https://openrouter.ai/api/v1',
-    model: 'google/gemma-4-26b-a4b-it:free',
+    models: openRouterModels,
     apiKey:
-      import.meta.env.VITE_API_KEY || import.meta.env.VITE_API_KEY,
+      import.meta.env.VITE_OPENROUTER_API_KEY ||
+      import.meta.env.VITE_API_KEY ||
+      import.meta.env.VITE_GOOGLE_API_KEY,
   },
 } as const
 
@@ -18,6 +27,11 @@ type ScenarioGuidanceInput = {
   currentStep: number
   history: AiChatMessage[]
   userAnswer: string
+}
+
+type ScenarioSummaryInput = {
+  scenario: Scenario
+  history: AiChatMessage[]
 }
 
 const selectedProvider =
@@ -75,27 +89,120 @@ export async function getScenarioGuidance({
     headers['X-Title'] = 'insurance.sol'
   }
 
-  const response = await axios.post(
-    `${provider.baseURL}/chat/completions`,
-    {
-      model: provider.model,
-      messages,
-      temperature: 0.45,
-      max_tokens: 350,
-    },
-    {
-      headers,
-      timeout: 30_000,
-    },
-  )
+  let lastError: unknown = null
 
-  const content = response.data?.choices?.[0]?.message?.content
+  for (const model of provider.models) {
+    try {
+      const response = await axios.post(
+        `${provider.baseURL}/chat/completions`,
+        {
+          model,
+          messages,
+          temperature: 0.45,
+          max_tokens: 350,
+        },
+        {
+          headers,
+          timeout: 30_000,
+        },
+      )
 
-  if (!content || typeof content !== 'string') {
-    throw new Error('AI не вернул текстовый ответ для этого шага.')
+      const content = response.data?.choices?.[0]?.message?.content
+
+      if (content && typeof content === 'string') {
+        return content.trim()
+      }
+    } catch (error) {
+      lastError = error
+
+      if (!axios.isAxiosError(error) || error.response?.status !== 429) {
+        throw error
+      }
+    }
   }
 
-  return content.trim()
+  if (lastError) {
+    throw lastError
+  }
+
+  throw new Error('AI не вернул текстовый ответ для этого шага.')
+}
+
+export async function getScenarioSummary({ scenario, history }: ScenarioSummaryInput) {
+  if (!provider.apiKey) {
+    throw new Error(
+      `Не найден API ключ для провайдера "${selectedProvider}". Добавь переменную окружения для AI.`,
+    )
+  }
+
+  const messages = [
+    {
+      role: 'system',
+      content: [
+        scenario.systemPrompt,
+        `Название сценария: ${scenario.title}.`,
+        `Цель обучения: ${scenario.goal}.`,
+        'Сделай итоговую короткую выжимку сценария по-русски.',
+        'Структура ответа:',
+        '1. Главный вывод.',
+        '2. Что пользователь теперь понимает.',
+        '3. Что стоит проверить в реальном полисе.',
+        'Объём: 90-140 слов.',
+      ].join('\n'),
+    },
+    ...history.map((message) => ({
+      role: message.role,
+      content: message.content,
+    })),
+  ]
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${provider.apiKey}`,
+  }
+
+  if (selectedProvider === 'openrouter') {
+    headers['HTTP-Referer'] = 'http://localhost:5173'
+    headers['X-Title'] = 'insurance.sol'
+  }
+
+  let lastError: unknown = null
+
+  for (const model of provider.models) {
+    try {
+      const response = await axios.post(
+        `${provider.baseURL}/chat/completions`,
+        {
+          model,
+          messages,
+          temperature: 0.35,
+          max_tokens: 260,
+        },
+        {
+          headers,
+          timeout: 30_000,
+        },
+      )
+
+      const content = response.data?.choices?.[0]?.message?.content
+
+      if (content && typeof content === 'string') {
+        return content.trim()
+      }
+    } catch (error) {
+      lastError = error
+
+      if (!axios.isAxiosError(error) || error.response?.status !== 429) {
+        throw error
+      }
+    }
+  }
+
+  if (lastError) {
+    throw lastError
+  }
+
+  throw new Error('AI не вернул итоговую выжимку.')
 }
 
 export function getAiErrorMessage(error: unknown) {

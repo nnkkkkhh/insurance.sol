@@ -35,6 +35,9 @@ export type GuideState = {
   isLoading: boolean
   error: string | null
   completed: boolean
+  finalSummary: string | null
+  summaryLoading: boolean
+  summaryError: string | null
 }
 
 export type AiChatMessage = {
